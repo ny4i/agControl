@@ -29,9 +29,13 @@ made here therefore persists across band changes with no further help, and a
 script that re-asserted it would only risk fighting changes made by hand at
 the AG utility.
 
-Safety: the AG cannot detect a keyed amplifier, and hot-switching its relays
-under RF damages the contacts. Every switch is gated on N1MM reporting
-IsTransmitting=False AND a freshly read port state reporting tx=0.
+Safety: hot-switching the AG's relays under RF damages the contacts. A switch
+is only made when N1MM reports IsTransmitting=False. A macro pressed during a
+transmission is QUEUED and applied the moment transmit ends, rather than being
+dropped -- N1MM emits a packet as soon as IsTransmitting changes, so the delay
+is milliseconds. The port's own tx= flag is also checked, but note it only
+reports meaningfully on stations that wire PTT into the AG; where they do not,
+it reads 0 permanently and proves nothing.
 """
 
 import argparse
@@ -59,6 +63,11 @@ RADIO_TO_PORT = {"1": 1, "2": 2}
 # renames antennas, and an 'antenna reload' status would be the proper trigger.
 ANTENNA_CACHE_SECONDS = 60.0
 
+# How long a request queued during transmit stays valid. Long enough for any
+# realistic over, short enough that a forgotten request does not fire much
+# later and surprise the operator.
+PENDING_TIMEOUT_SECONDS = 60.0
+
 
 class AntennaController:
    """Applies antenna selections to the AG, with validation and safety gates.
@@ -75,6 +84,12 @@ class AntennaController:
       self._client = None
       self._antennas = None
       self._antennas_read_at = 0.0
+
+      # Requests received while transmitting, held until it is safe to apply.
+      # port_id -> (antenna_name, band_at_request, monotonic_timestamp).
+      # One entry per port: a newer press replaces an older one, since the
+      # operator's latest instruction is the one they meant.
+      self._pending = {}
 
    def close(self):
       if self._client is not None:
@@ -118,12 +133,23 @@ class AntennaController:
    def select(self, port_id, antenna_name, n1mm_transmitting):
       """Select antenna_name on port_id. Returns a human-readable outcome.
 
+      If the station is transmitting the request is queued rather than
+      dropped, and applied by service_pending() once transmit ends. Pressing
+      the macro mid-transmission should mean "switch as soon as it is safe",
+      not "nothing happened".
+
       Refuses rather than guesses whenever anything does not line up: unknown
-      name, antenna not legal on the port's current band, or any indication
-      that the station may be transmitting.
+      name, or an antenna not legal on the port's current band.
       """
       if n1mm_transmitting:
-         return "REFUSED: N1MM reports IsTransmitting=True"
+         # port get is read-only and safe while transmitting. Record the band
+         # the operator was on, so a queued request is not applied to a
+         # different band later (see service_pending).
+         band = int(self.port_state(port_id).get("band", "0"))
+         self._pending[port_id] = (antenna_name, band, time.monotonic())
+         return "QUEUED %r for port %d (transmitting; band %d)" % (
+            antenna_name, port_id, band,
+         )
 
       table = self.antennas()
       entry = table.get(antenna_name.lower())
@@ -156,6 +182,38 @@ class AntennaController:
          )
 
       return self._apply(port_id, antenna_id, fields.get("name"), state.get("txant"))
+
+   def service_pending(self, port_id, n1mm_transmitting):
+      """Apply a queued selection once transmit ends. Returns a message or None.
+
+      Call on every packet. N1MM sends a packet whenever IsTransmitting
+      changes, so the end of a transmission is normally seen within
+      milliseconds rather than at the next 10-second heartbeat.
+
+      A queued request is discarded rather than applied if the operator has
+      since changed band -- "give me the OCF" was said about the band they
+      were on, and the AG keeps a separate antenna per band -- or if it has
+      simply gone stale.
+      """
+      pending = self._pending.get(port_id)
+      if pending is None or n1mm_transmitting:
+         return None
+
+      antenna_name, requested_band, requested_at = pending
+
+      if time.monotonic() - requested_at > PENDING_TIMEOUT_SECONDS:
+         del self._pending[port_id]
+         return "dropped queued %r for port %d (stale)" % (antenna_name, port_id)
+
+      current_band = int(self.port_state(port_id).get("band", "0"))
+      if current_band != requested_band:
+         del self._pending[port_id]
+         return "dropped queued %r for port %d (band moved %d -> %d)" % (
+            antenna_name, port_id, requested_band, current_band,
+         )
+
+      del self._pending[port_id]
+      return "applying queued request: %s" % self.select(port_id, antenna_name, False)
 
    def _apply(self, port_id, antenna_id, antenna_name, previous_txant):
       """Write the selection and verify it took. Caller has validated already."""
@@ -219,20 +277,26 @@ def main():
          transmitting = info.get("IsTransmitting", "").lower() == "true"
          name = info.get("AuxAntSelectedName", "")
 
-         if not name:
-            # Heartbeat, or a packet after the one-shot reverted to blank.
-            # Nothing to do: the AG remembers the antenna chosen for each band
-            # on its own, so a selection made here persists without any
-            # re-assertion from this script.
+         if name:
+            print("[%s] %s radio %s requests %r"
+                  % (sender[0], info.get("StationName", "?"), radio_nr, name))
+            try:
+               outcome = controller.select(port_id, name, transmitting)
+            except (OSError, AGError) as error:
+               outcome = "ERROR talking to AG: %s" % error
+            print("    %s" % outcome)
             continue
 
-         print("[%s] %s radio %s requests %r"
-               % (sender[0], info.get("StationName", "?"), radio_nr, name))
+         # Heartbeat, or a packet after the one-shot reverted to blank. No
+         # selection to make -- the AG remembers the antenna for each band on
+         # its own -- but this is where a request queued during transmit gets
+         # applied, since N1MM sends a packet the moment IsTransmitting drops.
          try:
-            outcome = controller.select(port_id, name, transmitting)
+            outcome = controller.service_pending(port_id, transmitting)
          except (OSError, AGError) as error:
             outcome = "ERROR talking to AG: %s" % error
-         print("    %s" % outcome)
+         if outcome:
+            print("[%s] %s" % (sender[0], outcome))
 
    except KeyboardInterrupt:
       print("\nStopped.")

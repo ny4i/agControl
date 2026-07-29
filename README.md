@@ -216,9 +216,23 @@ python ag_n1mm_control.py --live --station STATION1  # only act on one StationNa
     OK: port 1 -> OCF (antenna 4)
 ```
 
-`RadioNr` 1 and 2 map to AG ports A and B. Every switch is gated on N1MM reporting
-`IsTransmitting=False` **and** a freshly read `port get` reporting `tx=0`, and the antenna's band
-mask is checked against the port's current band.
+`RadioNr` 1 and 2 map to AG ports A and B. The antenna's band mask is checked against the port's
+current band before any write.
+
+**Presses during a transmission are queued, not dropped.** Switching relays under RF damages the
+contacts, so a macro pressed while `IsTransmitting=True` is held and applied the moment transmit
+ends. N1MM emits a packet as soon as `IsTransmitting` changes, so the delay is milliseconds
+rather than a wait for the next heartbeat.
+
+```
+[192.168.1.50] STATION1 radio 1 requests 'OCF'
+    QUEUED 'OCF' for port 1 (transmitting; band 5)
+[192.168.1.50] applying queued request: OK: port 1 -> OCF (antenna 4)
+```
+
+A queued request is dropped rather than applied if the operator changes band before transmit ends
+(the request was about the band they were on, and the AG keeps a separate antenna per band), or
+if it goes stale after 60 seconds. A newer press replaces an older queued one.
 
 ### Behavior worth understanding
 
