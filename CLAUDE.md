@@ -107,6 +107,13 @@ These were confirmed on a live device and contradict the docs. Trust these over 
   to re-assert selections after a band change. Beware the misreading this invites: watching a
   band change swap the antenna looks like the AG discarding your override, when it is actually
   restoring the *other* band's remembered selection.
+- **That per-band table is in flash and survives a power cycle.** After pulling power at the
+  supply with band 9 active: on boot band 9 still read `txant=4` (OCF), and switching the radio
+  to band 7 restored `txant=1` (HF_Beam). Both bands' selections survived, so this is a
+  persistent per-band table, not merely a saved "last antenna in use".
+- **`auto` is NOT persisted across a power cycle — it returns as `1`.** A port left at
+  `auto=0 source=BCD` came back up `auto=1 source=BCD` with nothing else touched. `source`
+  persists; `auto` does not. Do not rely on `auto=0` surviving a power failure.
 - BCD band following works with `auto=0`; `auto` governs source auto-detection, not band tracking.
 - LAN connections get the prologue `V4.1.16 AG` with no ` AUTH` suffix, as documented.
 - `keepalive enable` did **not** persist across connections: an idle connection with no `ping`

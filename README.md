@@ -211,6 +211,9 @@ This was verified with nothing but a read-only poller running: HF_Beam selected 
 therefore contains no re-assertion logic — it would be redundant, and it would fight antenna
 changes made by hand at the AG utility.
 
+The table is held in flash and **survives a power cycle**: after cutting power at the supply, both
+bands still restored their own antenna. Set your preference for a band once and it stays set.
+
 **`{auxantsel}` is a one-shot.** N1MM sends the antenna name in exactly one packet, then reverts
 the field to blank on the next heartbeat. If that datagram is lost, the switch simply does not
 happen and there is no retry — press the key again. Running the bridge on the same machine as
@@ -240,6 +243,10 @@ for a terminator after `port get 1` hangs until the socket times out.
 string and falls back to `AUTO` for anything it does not recognize — so a typo like `BDC` reports
 success while leaving the port in `AUTO`. The response code proves nothing here; `ag_control.py`
 validates client-side *and* reads the value back to confirm.
+
+**The `auto` flag does not survive a power cycle.** A port left at `auto=0 source=BCD` comes back
+up as `auto=1 source=BCD`. `source` is persisted; `auto` is not. The per-band antenna table *is*
+persisted.
 
 **Undocumented fields:** `antenna list` rows include `hotkey=`, and `conf get` returns
 `bandcheck=`. Parse key/value pairs permissively rather than by fixed position.
