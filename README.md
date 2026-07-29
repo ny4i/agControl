@@ -3,7 +3,7 @@
 Python control for the [4O3A Antenna Genius](https://www.4o3a.com/) antenna switch over its
 Ethernet API, plus an optional bridge that lets N1MM+ macros override the antenna selection.
 
-No third-party dependencies — Python 3.7+ and the standard library.
+Thanks to N8SDR for converting the API docs to md files: https://github.com/N8SDR1/SDRLoggerPlusNo third-party dependencies — Python 3.7+ and the standard library.
 
 Everything here was developed and verified against real hardware: **Antenna Genius hardware 4.0,
 firmware 4.1.16**. Several behaviors documented below differ from the published API docs; see
