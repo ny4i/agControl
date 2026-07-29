@@ -110,9 +110,13 @@ DRY RUN: would send 'port set 1 rxant=1 txant=1'
 
 By default the tool **refuses** to:
 
-- switch a port that reports `tx=1` (transmitting) — hot-switching the relays under RF damages
-  the contacts, and the AG cannot detect a keyed amplifier on its own;
+- switch a port that reports `tx=1` (transmitting);
 - select an antenna whose band mask does not include the port's current band.
+
+> The `tx` flag reflects a PTT line wired into the Antenna Genius. **If your station does not
+> feed PTT to the AG, `tx` always reads `0`** and this check can never fire — do not rely on it
+> as transmit protection. Where the logger reports transmit state, that is the meaningful gate
+> (see the N1MM section).
 
 ```
 $ python ag_control.py select 1 6m_Yagi
