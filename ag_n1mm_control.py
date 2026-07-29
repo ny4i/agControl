@@ -21,6 +21,14 @@ in, <Antenna> becomes the better primary trigger because it repeats in every
 10-second heartbeat and is therefore self-correcting, whereas AuxAntSelectedName
 is sent in exactly one packet and is lost forever if that packet is dropped.
 
+Why no re-assertion logic: the AG remembers the antenna selected for each band
+and restores it when that band comes back. Verified with nothing but a
+read-only poller running -- selecting HF_Beam on 15m and OCF on 10m, then
+toggling between them, made the AG alternate antennas on its own. A selection
+made here therefore persists across band changes with no further help, and a
+script that re-asserted it would only risk fighting changes made by hand at
+the AG utility.
+
 Safety: the AG cannot detect a keyed amplifier, and hot-switching its relays
 under RF damages the contacts. Every switch is gated on N1MM reporting
 IsTransmitting=False AND a freshly read port state reporting tx=0.
@@ -51,11 +59,6 @@ RADIO_TO_PORT = {"1": 1, "2": 2}
 # renames antennas, and an 'antenna reload' status would be the proper trigger.
 ANTENNA_CACHE_SECONDS = 60.0
 
-# Minimum gap between port reads. RadioInfo is sent on every change, so
-# spinning the VFO produces a burst of packets; without this the controller
-# would poll the AG continuously.
-POLL_THROTTLE_SECONDS = 2.0
-
 
 class AntennaController:
    """Applies antenna selections to the AG, with validation and safety gates.
@@ -72,20 +75,6 @@ class AntennaController:
       self._client = None
       self._antennas = None
       self._antennas_read_at = 0.0
-
-      # Operator intent, keyed by (port, band): the antenna name last chosen
-      # by a macro press while that port was on that band. Verified on this
-      # station: a BCD band change makes the AG revert to its own per-band
-      # default and silently discard the override, so intent has to be
-      # remembered here and re-applied.
-      self._desired = {}
-
-      # Last band seen per port, used to detect a band change.
-      self._last_band = {}
-
-      # Throttles port reads: RadioInfo packets arrive on every change, so
-      # spinning the VFO would otherwise poll the AG continuously.
-      self._last_poll = {}
 
    def close(self):
       if self._client is not None:
@@ -161,13 +150,6 @@ class AntennaController:
             fields.get("name"), antenna_id, band, allowed or "none",
          )
 
-      # Remember the override for this band before applying it, so it can be
-      # re-applied after the AG reverts to its own default on a band change.
-      # Keyed by the band the AG itself reports -- the AG stays authoritative
-      # for band detection; this only overrides which antenna that band uses.
-      self._desired[(port_id, band)] = fields.get("name")
-      self._last_band[port_id] = band
-
       if state.get("txant") == antenna_id and state.get("rxant") == antenna_id:
          return "no change: port %d already on %s (antenna %s)" % (
             port_id, fields.get("name"), antenna_id,
@@ -189,53 +171,6 @@ class AntennaController:
             antenna_id, port_id, after.get("txant"),
          )
       return "OK: port %d -> %s (antenna %s)" % (port_id, antenna_name, antenna_id)
-
-   def reconcile(self, port_id, n1mm_transmitting):
-      """Re-apply a stored override after the AG reverts on a band change.
-
-      Returns a message if action was taken, otherwise None.
-
-      Deliberately triggered by a *band change* rather than run continuously:
-      a continuous loop would also revert antenna changes made by hand at the
-      AG utility, which would fight the operator. Within a band, whatever is
-      selected stands; crossing into a band that has a stored override
-      re-applies it once.
-      """
-      now = time.monotonic()
-      if now - self._last_poll.get(port_id, 0.0) < POLL_THROTTLE_SECONDS:
-         return None
-      self._last_poll[port_id] = now
-
-      state = self.port_state(port_id)
-      band = int(state.get("band", "0"))
-
-      previous_band = self._last_band.get(port_id)
-      self._last_band[port_id] = band
-      if previous_band == band:
-         return None
-
-      wanted_name = self._desired.get((port_id, band))
-      if wanted_name is None:
-         # No override recorded for this band: leave the AG's default alone.
-         return None
-
-      if n1mm_transmitting or state.get("tx") != "0":
-         return "band %d: deferring %s override (transmitting)" % (band, wanted_name)
-
-      entry = self.antennas().get(wanted_name.lower())
-      if entry is None:
-         return "band %d: stored override %r no longer exists" % (band, wanted_name)
-
-      antenna_id, fields = entry
-      if band not in decode_band_mask(fields.get("tx", "0")):
-         return "band %d: stored override %s is not valid here" % (band, wanted_name)
-
-      if state.get("txant") == antenna_id:
-         return None
-
-      return "band %d change -> re-applying override: %s" % (
-         band, self._apply(port_id, antenna_id, wanted_name, state.get("txant")),
-      )
 
 
 def main():
@@ -284,25 +219,20 @@ def main():
          transmitting = info.get("IsTransmitting", "").lower() == "true"
          name = info.get("AuxAntSelectedName", "")
 
-         if name:
-            print("[%s] %s radio %s requests %r"
-                  % (sender[0], info.get("StationName", "?"), radio_nr, name))
-            try:
-               outcome = controller.select(port_id, name, transmitting)
-            except (OSError, AGError) as error:
-               outcome = "ERROR talking to AG: %s" % error
-            print("    %s" % outcome)
+         if not name:
+            # Heartbeat, or a packet after the one-shot reverted to blank.
+            # Nothing to do: the AG remembers the antenna chosen for each band
+            # on its own, so a selection made here persists without any
+            # re-assertion from this script.
             continue
 
-         # Heartbeat (or a packet after the one-shot reverted). This is the
-         # only opportunity to notice that the AG changed band and dropped a
-         # stored override, so it must be checked on every packet.
+         print("[%s] %s radio %s requests %r"
+               % (sender[0], info.get("StationName", "?"), radio_nr, name))
          try:
-            outcome = controller.reconcile(port_id, transmitting)
+            outcome = controller.select(port_id, name, transmitting)
          except (OSError, AGError) as error:
             outcome = "ERROR talking to AG: %s" % error
-         if outcome:
-            print("[%s] %s" % (sender[0], outcome))
+         print("    %s" % outcome)
 
    except KeyboardInterrupt:
       print("\nStopped.")

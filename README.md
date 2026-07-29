@@ -202,13 +202,14 @@ mask is checked against the port's current band.
 
 ### Behavior worth understanding
 
-**A band change discards the override.** Under `source=BCD`, when the AG detects a new band it
-reverts to its own per-band default and drops whatever the macro selected. The bridge therefore
-remembers the override per `(port, band)` and re-applies it when the AG changes band.
+**Selections persist across band changes — the AG does this for you.** The Antenna Genius
+remembers the antenna chosen for each band and restores it when that band comes back, so a
+selection made by the macro survives band changes with no help from this script.
 
-Re-application is triggered by a **band change**, not run continuously — a continuous loop would
-also revert antenna changes made by hand at the AG utility and fight the operator. Within a band,
-whatever is selected stands.
+This was verified with nothing but a read-only poller running: HF_Beam selected on 15m and OCF on
+10m, then toggling between the two bands made the AG alternate antennas by itself. The bridge
+therefore contains no re-assertion logic — it would be redundant, and it would fight antenna
+changes made by hand at the AG utility.
 
 **`{auxantsel}` is a one-shot.** N1MM sends the antenna name in exactly one packet, then reverts
 the field to blank on the next heartbeat. If that datagram is lost, the switch simply does not

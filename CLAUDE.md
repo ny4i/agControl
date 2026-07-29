@@ -97,11 +97,17 @@ These were confirmed on a live device and contradict the docs. Trust these over 
 - Setting `source=` also changes `auto` as a side effect (setting `source=LAN` left `auto=0`),
   so pass `auto=` explicitly whenever it matters.
 - **Antenna selection sticks while the port stays in automatic band mode.** Writing
-  `port set 1 rxant=N txant=N` with `auto=1 source=BCD` left untouched was accepted and still
-  held 4 s later — the docs' `auto=0 source=MANUAL` example is not required just to choose an
-  antenna. This means the AG can keep owning band detection while a client owns only the
-  antenna-within-band choice. (Not yet tested: whether a BCD *band change* resets the antenna
-  to that band's default.)
+  `port set 1 rxant=N txant=N` with `auto=1 source=BCD` left untouched was accepted and held —
+  the docs' `auto=0 source=MANUAL` example is not required just to choose an antenna. The AG can
+  keep owning band detection while a client owns only the antenna-within-band choice.
+- **The AG remembers the selected antenna per band and restores it on returning to that band.**
+  Verified with only a read-only poller running: HF_Beam selected on 15m (band 7) and OCF on 10m
+  (band 9), then toggling bands made the AG alternate antennas unaided
+  (`band=9 txant=4` → `band=7 txant=1` → `band=9 txant=4`). A client therefore does **not** need
+  to re-assert selections after a band change. Beware the misreading this invites: watching a
+  band change swap the antenna looks like the AG discarding your override, when it is actually
+  restoring the *other* band's remembered selection.
+- BCD band following works with `auto=0`; `auto` governs source auto-detection, not band tracking.
 - LAN connections get the prologue `V4.1.16 AG` with no ` AUTH` suffix, as documented.
 - `keepalive enable` did **not** persist across connections: an idle connection with no `ping`
   survived well past the documented 5-second cutoff. Treat keepalive as per-connection opt-in.
