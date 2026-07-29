@@ -14,6 +14,7 @@ address or a broadcast address.
 import argparse
 import socket
 import sys
+import time
 import xml.etree.ElementTree as ElementTree
 
 DEFAULT_PORT = 12060
@@ -55,6 +56,17 @@ def parse_radio_info(payload):
    return {child.tag: (child.text or "").strip() for child in root}
 
 
+def timestamp():
+   """Wall-clock time to the millisecond.
+
+   Resolution matters when measuring how far apart a logger spaces repeated
+   packets: a burst arriving within a few milliseconds shares one loss event
+   and buys much less redundancy than spaced retries.
+   """
+   now = time.time()
+   return "%s.%03d" % (time.strftime("%H:%M:%S", time.localtime(now)), (now % 1) * 1000)
+
+
 def format_frequency(raw_hz_tens):
    """RadioInfo frequencies are in tens of Hz with no delimiter.
 
@@ -93,7 +105,7 @@ def main():
          payload, sender = sock.recvfrom(65535)
 
          if args.raw:
-            print("--- %s:%d ---" % sender)
+            print("--- %s  %s:%d ---" % (timestamp(), sender[0], sender[1]))
             print(payload.decode("utf-8", errors="replace"))
 
          info = parse_radio_info(payload)
@@ -111,13 +123,13 @@ def main():
                value = format_frequency(value)
             parts.append("%s=%s" % (field, value if value != "" else "-"))
 
-         print("[%s] %s" % (sender[0], "  ".join(parts)))
+         print("[%s %s] %s" % (timestamp(), sender[0], "  ".join(parts)))
 
-         # The field that would drive name-based antenna selection is
-         # populated for exactly one packet after an {auxantsel} keypress.
+         # The field that drives name-based antenna selection. N1MM populates
+         # it for exactly one packet per {auxantsel} keypress; a logger may be
+         # configured to repeat the macro for redundancy over UDP.
          if info.get("AuxAntSelectedName"):
-            print("   >>> AuxAntSelectedName = %r  (one-shot; reverts to blank)"
-                  % info["AuxAntSelectedName"])
+            print("   >>> AuxAntSelectedName = %r" % info["AuxAntSelectedName"])
 
    except KeyboardInterrupt:
       print("\nStopped.")

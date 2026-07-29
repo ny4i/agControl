@@ -170,8 +170,24 @@ In N1MM+: **Config → Configure Ports… → Broadcast Data**, enable **Radio**
 machine that will run the bridge (default UDP port 12060). The `127.0.0.1` default only reaches
 software on the N1MM PC itself.
 
-Add the `{auxantsel}` macro to a function key, configured with the antenna name. **The name must
-match the AG antenna name exactly** (case-insensitive).
+Add the `{auxantsel NN}` macro to a function key, where `NN` is N1MM's own **aux antenna number**:
+
+```
+F11 OCF,{auxantsel 01}
+```
+
+N1MM resolves that number to a *name* from its antenna table and broadcasts the name in
+`<AuxAntSelectedName>`. **That name must match the AG antenna name** (case-insensitive) — it is
+what this bridge matches on.
+
+Match on the name, not the number. They are unrelated: on the reference station `{auxantsel 01}`
+broadcasts `AuxAntSelected=1` for an antenna that is number **4** on the AG. A client keying on
+the number selects the wrong antenna, silently.
+
+> **Repeating the macro for redundancy does not work.** `{auxantsel 01} {auxantsel 01}
+> {auxantsel 01}` on one function key produces a single UDP packet, not three — N1MM emits a
+> packet on state *change*, and three identical calls are one change. Verified by capture. The
+> selection is sent exactly once per keypress; press the key again if a switch does not happen.
 
 ### Watch the traffic first
 
